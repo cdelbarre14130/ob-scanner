@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """
-Scanner "Order Block + consolidation" (setup long) sur les paires USDT d'un exchange.
+Scanner "Order Block + consolidation" sur les paires USDT d'un exchange.
 
-Alerte quand : impulsion haussière -> OB à sa base -> le prix consolide au-dessus
-de l'OB sans l'avoir encore retesté (on anticipe le retour vers l'OB).
+LONG  : impulsion haussière -> OB (dernière bougie baissière) -> le prix consolide
+        AU-DESSUS de l'OB sans l'avoir retesté -> on anticipe le retour vers l'OB.
+SHORT : le miroir exact (impulsion baissière, OB = dernière bougie haussière,
+        consolidation SOUS l'OB).
+
+Stop loss : sous (long) / au-dessus (short) de toute la structure de l'impulsion,
+avec une marge en ATR et une distance minimale de 1 ATR par rapport à l'entrée.
 
 Installation :  pip install ccxt pandas requests
 Lancement    :  python ob_scanner.py            (un scan, pour cron / GitHub Actions)
@@ -14,7 +19,8 @@ Notifications (variables d'environnement, au choix) :
   TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
 
 Réglages (variables d'environnement, valeurs par défaut entre parenthèses) :
-  EXCHANGE (binance), TIMEFRAMES (15m,1h), MIN_VOLUME (2000000 USDT / 24h)
+  EXCHANGE (binance), TIMEFRAMES (15m,1h), MIN_VOLUME (2000000 USDT / 24h),
+  SIDES (long,short), RISK_PCT (1 = % du capital risqué par trade, pour le calcul de taille)
 """
 import argparse
 import json
@@ -29,17 +35,20 @@ import requests
 # ----------------------------- Paramètres -----------------------------
 EXCHANGE_ID = os.getenv("EXCHANGE", "binance")
 TIMEFRAMES = [t.strip() for t in os.getenv("TIMEFRAMES", "15m,1h").split(",") if t.strip()]
+SIDES = [s.strip() for s in os.getenv("SIDES", "long,short").split(",") if s.strip()]
 MIN_QUOTE_VOLUME = float(os.getenv("MIN_VOLUME", "2000000"))  # USDT sur 24h
+RISK_PCT = float(os.getenv("RISK_PCT", "1"))
 
 ATR_PERIOD = 14
-IMPULSE_ATR = 2.5      # taille minimale de l'impulsion, en multiples d'ATR
+IMPULSE_ATR = 2.5        # taille minimale de l'impulsion, en multiples d'ATR
 IMPULSE_MAX_CANDLES = 5  # durée max de l'impulsion
-SWING_LOOKBACK = 20    # l'impulsion doit casser le plus haut de ces N bougies
-OB_SEARCH = 5          # on cherche la dernière bougie baissière sur N bougies avant l'impulsion
-MIN_RANGE = 8          # bougies minimum de consolidation après l'impulsion
-MAX_RANGE = 80         # au-delà, le setup est considéré périmé
-SL_MARGIN_ATR = 0.2    # marge du SL sous le bas de l'OB, en ATR
-MIN_RR = 2.0           # ratio risque/rendement minimum (entrée = haut de l'OB)
+SWING_LOOKBACK = 20      # l'impulsion doit casser le plus haut/bas de ces N bougies
+OB_SEARCH = 5            # on cherche la bougie OB sur N bougies avant l'impulsion
+MIN_RANGE = 8            # bougies minimum de consolidation après l'impulsion
+MAX_RANGE = 80           # au-delà, le setup est considéré périmé
+SL_MARGIN_ATR = 0.5      # marge du SL au-delà de la structure, en ATR
+MIN_RISK_ATR = 1.0       # distance minimale entrée -> SL, en ATR (le SL est élargi si besoin)
+MIN_RR = 2.0             # ratio risque/rendement minimum
 CANDLES = 250
 
 EXCLUDED = ("UP/", "DOWN/", "BULL/", "BEAR/")
@@ -58,14 +67,17 @@ def add_atr(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def detect(df: pd.DataFrame):
-    """Retourne un dict décrivant le setup, ou None. df ne contient que des bougies clôturées."""
+def detect_long(df: pd.DataFrame):
+    """Setup long. df ne contient que des bougies clôturées. Retourne un dict ou None."""
     df = add_atr(df.copy()).reset_index(drop=True)
     n = len(df)
     if n < SWING_LOOKBACK + ATR_PERIOD + MAX_RANGE:
         return None
 
     o, h, l, c, atr = df["open"], df["high"], df["low"], df["close"], df["atr"]
+    cur_atr = atr.iloc[-1]
+    if pd.isna(cur_atr) or cur_atr <= 0:
+        return None
 
     for e in range(n - 1 - MIN_RANGE, n - 1 - MAX_RANGE, -1):  # fin de l'impulsion, la plus récente d'abord
         if pd.isna(atr[e]):
@@ -101,11 +113,12 @@ def detect(df: pd.DataFrame):
         if not (ob_high < price < range_high):  # le prix doit être dans la consolidation
             continue
 
+        # SL : sous tout le bas de la structure (de l'OB à la fin de l'impulsion),
+        # avec marge, et au moins MIN_RISK_ATR d'écart avec l'entrée.
         entry = ob_high
-        sl = ob_low - SL_MARGIN_ATR * atr[e]
+        structure_low = l[ob:e + 1].min()
+        sl = min(structure_low - SL_MARGIN_ATR * cur_atr, entry - MIN_RISK_ATR * cur_atr)
         tp = range_high
-        if entry <= sl:
-            continue
         rr = (tp - entry) / (entry - sl)
         if rr < MIN_RR:
             continue
@@ -122,6 +135,29 @@ def detect(df: pd.DataFrame):
             "range_candles": n - 1 - e,
         }
     return None
+
+
+def detect(df: pd.DataFrame, side: str):
+    """Long : détection directe. Short : on inverse les prix, on détecte un long, on réinverse."""
+    if side == "long":
+        return detect_long(df)
+    inv = df.copy()
+    inv["open"], inv["close"] = -df["open"], -df["close"]
+    inv["high"], inv["low"] = -df["low"], -df["high"]
+    r = detect_long(inv)
+    if not r:
+        return None
+    return {
+        "ob_time": r["ob_time"],
+        "ob_low": -r["ob_high"],
+        "ob_high": -r["ob_low"],
+        "entry": -r["entry"],
+        "sl": -r["sl"],
+        "tp": -r["tp"],
+        "rr": r["rr"],
+        "price": -r["price"],
+        "range_candles": r["range_candles"],
+    }
 
 
 # ----------------------------- Notifications -----------------------------
@@ -145,6 +181,23 @@ def notify(text: str) -> None:
         sent = True
     if not sent:
         print(text)
+
+
+def build_message(sym: str, tf: str, side: str, st: dict) -> str:
+    long = side == "long"
+    head = "🟢 LONG" if long else "🔴 SHORT"
+    where = "au-dessus d'un OB" if long else "sous un OB"
+    stop_pct = abs(st["entry"] - st["sl"]) / st["entry"] * 100
+    position_pct = RISK_PCT / stop_pct * 100  # taille de position en % du capital
+    lever = " (levier nécessaire)" if position_pct > 100 else ""
+    return (
+        f"{head} {sym} [{tf}] - consolidation {where}\n"
+        f"Prix : {fmt(st['price'])} ({st['range_candles']} bougies de range)\n"
+        f"Zone OB : {fmt(st['ob_low'])} - {fmt(st['ob_high'])}\n"
+        f"Entrée : {fmt(st['entry'])} | SL : {fmt(st['sl'])} ({stop_pct:.1f}%) | TP : {fmt(st['tp'])}\n"
+        f"R/R : {st['rr']:.1f}\n"
+        f"Pour {RISK_PCT:g}% du capital risqué : position ≈ {position_pct:.0f}% du capital{lever}"
+    )
 
 
 def load_state() -> dict:
@@ -177,7 +230,10 @@ def get_symbols(ex) -> list:
 def scan(ex) -> None:
     state = load_state()
     symbols = get_symbols(ex)
-    print(f"{time.strftime('%H:%M:%S')} - {len(symbols)} paires >= {MIN_QUOTE_VOLUME:,.0f} USDT/24h, TF {TIMEFRAMES}")
+    print(
+        f"{time.strftime('%H:%M:%S')} - {len(symbols)} paires >= {MIN_QUOTE_VOLUME:,.0f} USDT/24h, "
+        f"TF {TIMEFRAMES}, sens {SIDES}"
+    )
 
     for sym in symbols:
         for tf in TIMEFRAMES:
@@ -189,25 +245,20 @@ def scan(ex) -> None:
             df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
             df = df.iloc[:-1]  # on retire la bougie en cours
 
-            setup = detect(df)
-            if not setup:
-                continue
+            for side in SIDES:
+                setup = detect(df, side)
+                if not setup:
+                    continue
 
-            key = f"{sym}|{tf}|{setup['ob_time']}"
-            if key in state:
-                continue
+                key = f"{sym}|{tf}|{side}|{setup['ob_time']}"
+                if key in state:
+                    continue
 
-            try:
-                notify(
-                    f"📍 {sym} [{tf}] - consolidation au-dessus d'un OB\n"
-                    f"Prix : {fmt(setup['price'])} ({setup['range_candles']} bougies de range)\n"
-                    f"Zone OB : {fmt(setup['ob_low'])} - {fmt(setup['ob_high'])}\n"
-                    f"Entrée : {fmt(setup['entry'])} | SL : {fmt(setup['sl'])} | TP : {fmt(setup['tp'])}\n"
-                    f"R/R : {setup['rr']:.1f}"
-                )
-                state[key] = int(time.time())
-            except Exception as err:
-                print(f"  notification échouée pour {sym} {tf}: {err}")
+                try:
+                    notify(build_message(sym, tf, side, setup))
+                    state[key] = int(time.time())
+                except Exception as err:
+                    print(f"  notification échouée pour {sym} {tf} {side}: {err}")
 
     # purge des alertes de plus de 14 jours
     cutoff = time.time() - 14 * 86400
