@@ -7,8 +7,12 @@ LONG  : impulsion haussière -> OB (dernière bougie baissière) -> le prix cons
 SHORT : le miroir exact (impulsion baissière, OB = dernière bougie haussière,
         consolidation SOUS l'OB).
 
+Deux entrées : entrée 1 = bord de l'OB touché en premier, entrée 2 = bord opposé de l'OB
+(au moins 0,5 ATR plus loin). La position est répartie entre les deux (50/50 par défaut) et
+dimensionnée pour que la perte au SL, une fois les 2 entrées remplies, vaille RISK_PCT % du capital.
+
 Stop loss : sous (long) / au-dessus (short) de toute la structure de l'impulsion,
-avec une marge en ATR et une distance minimale de 1 ATR par rapport à l'entrée.
+avec une marge en ATR, au moins 0,5 ATR au-delà de l'entrée 2 et 1 ATR de l'entrée 1.
 
 Installation :  pip install ccxt pandas requests
 Lancement    :  python ob_scanner.py            (un scan, pour cron / GitHub Actions)
@@ -20,7 +24,8 @@ Notifications (variables d'environnement, au choix) :
 
 Réglages (variables d'environnement, valeurs par défaut entre parenthèses) :
   EXCHANGE (binance), TIMEFRAMES (15m,1h), MIN_VOLUME (2000000 USDT / 24h),
-  SIDES (long,short), RISK_PCT (1 = % du capital risqué par trade, pour le calcul de taille)
+  SIDES (long,short), RISK_PCT (1 = % du capital risqué par trade, entrées 1+2 remplies),
+  SPLIT1 (0.5 = part de la position sur l'entrée 1)
 """
 import argparse
 import json
@@ -38,6 +43,7 @@ TIMEFRAMES = [t.strip() for t in os.getenv("TIMEFRAMES", "15m,1h").split(",") if
 SIDES = [s.strip() for s in os.getenv("SIDES", "long,short").split(",") if s.strip()]
 MIN_QUOTE_VOLUME = float(os.getenv("MIN_VOLUME", "2000000"))  # USDT sur 24h
 RISK_PCT = float(os.getenv("RISK_PCT", "1"))
+SPLIT1 = min(max(float(os.getenv("SPLIT1", "0.5")), 0.05), 0.95)  # part de la position sur l'entrée 1
 
 ATR_PERIOD = 14
 IMPULSE_ATR = 2.5        # taille minimale de l'impulsion, en multiples d'ATR
@@ -48,7 +54,9 @@ MIN_RANGE = 8            # bougies minimum de consolidation après l'impulsion
 MAX_RANGE = 80           # au-delà, le setup est considéré périmé
 SL_MARGIN_ATR = 0.5      # marge du SL au-delà de la structure, en ATR
 MIN_RISK_ATR = 1.0       # distance minimale entrée -> SL, en ATR (le SL est élargi si besoin)
-MIN_RR = 2.0             # ratio risque/rendement minimum
+MIN_RR = 2.0             # ratio risque/rendement minimum (calculé sur l'entrée 1)
+ENTRY2_MIN_ATR = 0.5     # écart minimal entre l'entrée 1 et l'entrée 2, en ATR
+BE_BUFFER = 0.0015       # marge au-delà du prix moyen pour couvrir les frais (0,15 %)
 CANDLES = 250
 
 EXCLUDED = ("UP/", "DOWN/", "BULL/", "BEAR/")
@@ -116,8 +124,13 @@ def detect_long(df: pd.DataFrame):
         # SL : sous tout le bas de la structure (de l'OB à la fin de l'impulsion),
         # avec marge, et au moins MIN_RISK_ATR d'écart avec l'entrée.
         entry = ob_high
+        entry2 = min(ob_low, entry - ENTRY2_MIN_ATR * cur_atr)
         structure_low = l[ob:e + 1].min()
-        sl = min(structure_low - SL_MARGIN_ATR * cur_atr, entry - MIN_RISK_ATR * cur_atr)
+        sl = min(
+            structure_low - SL_MARGIN_ATR * cur_atr,
+            entry - MIN_RISK_ATR * cur_atr,
+            entry2 - SL_MARGIN_ATR * cur_atr,
+        )
         tp = range_high
         rr = (tp - entry) / (entry - sl)
         if rr < MIN_RR:
@@ -128,6 +141,7 @@ def detect_long(df: pd.DataFrame):
             "ob_low": ob_low,
             "ob_high": ob_high,
             "entry": entry,
+            "entry2": entry2,
             "sl": sl,
             "tp": tp,
             "rr": rr,
@@ -152,6 +166,7 @@ def detect(df: pd.DataFrame, side: str):
         "ob_low": -r["ob_high"],
         "ob_high": -r["ob_low"],
         "entry": -r["entry"],
+        "entry2": -r["entry2"],
         "sl": -r["sl"],
         "tp": -r["tp"],
         "rr": r["rr"],
@@ -187,16 +202,36 @@ def build_message(sym: str, tf: str, side: str, st: dict) -> str:
     long = side == "long"
     head = "🟢 LONG" if long else "🔴 SHORT"
     where = "au-dessus d'un OB" if long else "sous un OB"
-    stop_pct = abs(st["entry"] - st["sl"]) / st["entry"] * 100
-    position_pct = RISK_PCT / stop_pct * 100  # taille de position en % du capital
-    lever = " (levier nécessaire)" if position_pct > 100 else ""
+    e1, e2, sl, tp = st["entry"], st["entry2"], st["sl"], st["tp"]
+    w1, w2 = SPLIT1, 1 - SPLIT1
+
+    risk1, risk2 = abs(e1 - sl), abs(e2 - sl)
+    # unités (par unité de capital) pour que la perte au SL, les 2 entrées remplies, = RISK_PCT %
+    units = (RISK_PCT / 100) / (w1 * risk1 + w2 * risk2)
+    n1 = w1 * units * e1 * 100  # tranche 1, en % du capital
+    n2 = w2 * units * e2 * 100  # tranche 2, en % du capital
+    total = n1 + n2
+    loss_t1_only = w1 * units * risk1 * 100  # perte au SL si seule l'entrée 1 est remplie, en % du capital
+
+    avg = w1 * e1 + w2 * e2
+    be = avg * (1 + BE_BUFFER) if long else avg * (1 - BE_BUFFER)
+    rr_avg = abs(tp - avg) / abs(avg - sl)
+    stop_pct = abs(e1 - sl) / e1 * 100
+    lever = " ⚠️ levier nécessaire" if total > 100 else ""
+
     return (
         f"{head} {sym} [{tf}] - consolidation {where}\n"
         f"Prix : {fmt(st['price'])} ({st['range_candles']} bougies de range)\n"
         f"Zone OB : {fmt(st['ob_low'])} - {fmt(st['ob_high'])}\n"
-        f"Entrée : {fmt(st['entry'])} | SL : {fmt(st['sl'])} ({stop_pct:.1f}%) | TP : {fmt(st['tp'])}\n"
-        f"R/R : {st['rr']:.1f}\n"
-        f"Pour {RISK_PCT:g}% du capital risqué : position ≈ {position_pct:.0f}% du capital{lever}"
+        f"Entrée 1 : {fmt(e1)} -> {n1:.0f}% du capital\n"
+        f"Entrée 2 : {fmt(e2)} -> {n2:.0f}% du capital\n"
+        f"Prix moyen (2 entrées) : {fmt(avg)}\n"
+        f"SL : {fmt(sl)} ({stop_pct:.1f}% de l'entrée 1) | TP : {fmt(tp)}\n"
+        f"R/R : {st['rr']:.1f} (entrée 1) / {rr_avg:.1f} (prix moyen)\n"
+        f"Réduire de moitié vers : {fmt(be)} (breakeven + frais)\n"
+        f"Perte au SL : {loss_t1_only:.2f}% si seule l'entrée 1 est remplie, "
+        f"{RISK_PCT:g}% si les 2 le sont\n"
+        f"Total engagé si les 2 entrées sont remplies : {total:.0f}% du capital{lever}"
     )
 
 
