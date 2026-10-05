@@ -314,8 +314,8 @@ def scan(ex) -> None:
                 except Exception as err:
                     print(f"  notification échouée pour {sym} {tf} {side}: {err}")
 
-    # purge des alertes de plus de 14 jours
-    cutoff = time.time() - 14 * 86400
+    # purge des alertes de plus de 90 jours
+    cutoff = time.time() - 90 * 86400
     save_state({k: v for k, v in state.items() if v > cutoff})
 
 
