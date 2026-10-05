@@ -198,7 +198,7 @@ def notify(text: str) -> None:
         print(text)
 
 
-def build_message(sym: str, tf: str, side: str, st: dict) -> str:
+def build_message_full(sym: str, tf: str, side: str, st: dict) -> str:
     long = side == "long"
     head = "🟢 LONG" if long else "🔴 SHORT"
     where = "au-dessus d'un OB" if long else "sous un OB"
@@ -232,6 +232,25 @@ def build_message(sym: str, tf: str, side: str, st: dict) -> str:
         f"Perte au SL : {loss_t1_only:.2f}% si seule l'entrée 1 est remplie, "
         f"{RISK_PCT:g}% si les 2 le sont\n"
         f"Total engagé si les 2 entrées sont remplies : {total:.0f}% du capital{lever}"
+    )
+
+
+def build_message(sym: str, tf: str, side: str, st: dict) -> str:
+    """Format court par défaut. ALERT_FORMAT=full pour le format détaillé (tailles de position, etc.)."""
+    if os.getenv("ALERT_FORMAT", "short") == "full":
+        return build_message_full(sym, tf, side, st)
+    head = "🟢 LONG" if side == "long" else "🔴 SHORT"
+    e1, e2, sl, tp = st["entry"], st["entry2"], st["sl"], st["tp"]
+    avg = SPLIT1 * e1 + (1 - SPLIT1) * e2
+    rr_avg = abs(tp - avg) / abs(avg - sl)
+    stop_pct = abs(e1 - sl) / e1 * 100
+    return (
+        f"{head} {sym} [{tf}]\n"
+        f"Prix : {fmt(st['price'])} ({st['range_candles']} bougies)\n"
+        f"E1 : {fmt(e1)}\n"
+        f"E2 : {fmt(e2)}\n"
+        f"SL : {fmt(sl)} ({stop_pct:.1f}% de E1) | TP : {fmt(tp)}\n"
+        f"R/R : {st['rr']:.1f} (E1) / {rr_avg:.1f}"
     )
 
 
