@@ -22,6 +22,12 @@ Notifications (variables d'environnement, au choix) :
   DISCORD_WEBHOOK_URL
   TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
 
+Filtres de tendance (tous désactivés par défaut ; mettre "1" pour activer) :
+  FILTER_HTF   le timeframe supérieur doit aller dans le sens du trade (HTF_MAP = 15m:1h,1h:4h) :
+               long si son dernier close est au-dessus de sa moyenne mobile 50, short si en dessous
+  FILTER_BTC   Bitcoin (BTC_SYMBOL, sur BTC_TF = 1h) doit aller dans le même sens (même règle)
+  FILTER_SLOPE exclut les setups quand la moyenne mobile 50 du timeframe de l'alerte est plate
+
 Réglages (variables d'environnement, valeurs par défaut entre parenthèses) :
   EXCHANGE (binance), TIMEFRAMES (15m,1h), MIN_VOLUME (2000000 USDT / 24h),
   SIDES (long,short), RISK_PCT (1 = % du capital risqué par trade, entrées 1+2 remplies),
@@ -58,6 +64,19 @@ MIN_RR = 2.0             # ratio risque/rendement minimum (calculé sur l'entré
 ENTRY2_MIN_ATR = 0.5     # écart minimal entre l'entrée 1 et l'entrée 2, en ATR
 BE_BUFFER = 0.0015       # marge au-delà du prix moyen pour couvrir les frais (0,15 %)
 CANDLES = 250
+
+# Filtres de tendance
+MA_PERIOD = 50
+HTF_MAP = dict(
+    p.strip().split(":", 1) for p in os.getenv("HTF_MAP", "15m:1h,1h:4h").split(",") if ":" in p
+)
+BTC_SYMBOL = os.getenv("BTC_SYMBOL", "BTC/USDT")
+BTC_TF = os.getenv("BTC_TF", "1h")
+SLOPE_LOOKBACK = 10      # la pente de la MA est mesurée sur N bougies
+SLOPE_MIN = 0.5          # pente minimale, en ATR, pour que la MA ne soit pas considérée « plate »
+USE_HTF = os.getenv("FILTER_HTF", "0") == "1"
+USE_BTC = os.getenv("FILTER_BTC", "0") == "1"
+USE_SLOPE = os.getenv("FILTER_SLOPE", "0") == "1"
 
 EXCLUDED = ("UP/", "DOWN/", "BULL/", "BEAR/")
 STABLES = {"USDC", "FDUSD", "TUSD", "USDP", "DAI", "EUR", "AEUR", "USD1", "XUSD", "PYUSD"}
@@ -175,6 +194,60 @@ def detect(df: pd.DataFrame, side: str):
     }
 
 
+# ----------------------------- Filtres de tendance -----------------------------
+def above_ma(df: pd.DataFrame) -> int:
+    """+1 si le dernier close (bougies clôturées) est au-dessus de sa moyenne mobile, -1 en dessous, 0 si indisponible."""
+    if len(df) < MA_PERIOD:
+        return 0
+    close = df["close"].iloc[-MA_PERIOD:]
+    mean, last = close.mean(), close.iloc[-1]
+    return 1 if last > mean else (-1 if last < mean else 0)
+
+
+def trend_matches(side: str, regime: int) -> bool:
+    return regime == (1 if side == "long" else -1)
+
+
+def slope_ok(df: pd.DataFrame) -> bool:
+    """Vrai si la moyenne mobile du timeframe de l'alerte n'est pas plate."""
+    need = MA_PERIOD + SLOPE_LOOKBACK
+    if len(df) < need:
+        return False
+    c = df["close"].to_numpy(float)
+    now = c[-MA_PERIOD:].mean()
+    before = c[-MA_PERIOD - SLOPE_LOOKBACK:-SLOPE_LOOKBACK].mean()
+    atr = add_atr(df.tail(need).copy())["atr"].iloc[-1]
+    if pd.isna(atr) or atr <= 0:
+        return False
+    return abs(now - before) / atr >= SLOPE_MIN
+
+
+def fetch_closed(ex, sym: str, tf: str, n: int) -> pd.DataFrame:
+    raw = ex.fetch_ohlcv(sym, tf, limit=n)
+    df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
+    return df.iloc[:-1]
+
+
+def filters_ok(ex, sym: str, tf: str, side: str, df: pd.DataFrame, btc_cache: dict) -> bool:
+    """Applique les filtres activés. En cas d'erreur de données : refus (on réessaiera au scan suivant)."""
+    try:
+        if USE_SLOPE and not slope_ok(df):
+            return False
+        if USE_HTF:
+            htf = HTF_MAP.get(tf)
+            if htf and not trend_matches(side, above_ma(fetch_closed(ex, sym, htf, MA_PERIOD + 5))):
+                return False
+        if USE_BTC:
+            if BTC_TF not in btc_cache:
+                btc_cache[BTC_TF] = above_ma(fetch_closed(ex, BTC_SYMBOL, BTC_TF, MA_PERIOD + 5))
+            if not trend_matches(side, btc_cache[BTC_TF]):
+                return False
+    except Exception as err:
+        print(f"  filtres {sym} {tf}: erreur ({err})")
+        return False
+    return True
+
+
 # ----------------------------- Notifications -----------------------------
 def fmt(x: float) -> str:
     return f"{x:.8g}"
@@ -283,6 +356,7 @@ def get_symbols(ex) -> list:
 
 def scan(ex) -> None:
     state = load_state()
+    btc_cache = {}
     symbols = get_symbols(ex)
     print(
         f"{time.strftime('%H:%M:%S')} - {len(symbols)} paires >= {MIN_QUOTE_VOLUME:,.0f} USDT/24h, "
@@ -307,6 +381,8 @@ def scan(ex) -> None:
                 key = f"{sym}|{tf}|{side}|{setup['ob_time']}"
                 if key in state:
                     continue
+                if not filters_ok(ex, sym, tf, side, df, btc_cache):
+                    continue  # pas marqué : le setup pourra être signalé plus tard si les filtres passent
 
                 try:
                     notify(build_message(sym, tf, side, setup))
