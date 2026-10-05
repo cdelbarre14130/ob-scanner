@@ -1,0 +1,24 @@
+📊 Rejeu de 154 alertes (risque 1% par trade, frais 0.10%/ordre)
+0 non reproduites, 41 anciennes ignorées
+
+AVEC réduction de moitié au prix moyen :
+15m long: 85 alertes | 22 remplies | TP 3 / SL 8 / ouverts 11 | manqués 49, en attente 14
+   résultat clos -5.59% du capital | latent +1.27%
+15m short: 16 alertes | 5 remplies | TP 1 / SL 4 / ouverts 0 | manqués 8, en attente 3
+   résultat clos -5.47% du capital | latent +0.00%
+1h long: 35 alertes | 2 remplies | TP 0 / SL 0 / ouverts 2 | manqués 16, en attente 17
+   résultat clos +0.00% du capital | latent +0.20%
+1h short: 18 alertes | 9 remplies | TP 0 / SL 3 / ouverts 6 | manqués 0, en attente 9
+   résultat clos -3.86% du capital | latent +1.01%
+
+SANS réduction :
+15m long: 85 alertes | 22 remplies | TP 3 / SL 8 / ouverts 11 | manqués 49, en attente 14
+   résultat clos -4.97% du capital | latent +3.88%
+15m short: 16 alertes | 5 remplies | TP 1 / SL 4 / ouverts 0 | manqués 8, en attente 3
+   résultat clos -6.26% du capital | latent +0.00%
+1h long: 35 alertes | 2 remplies | TP 0 / SL 0 / ouverts 2 | manqués 16, en attente 17
+   résultat clos +0.00% du capital | latent +0.20%
+1h short: 18 alertes | 9 remplies | TP 0 / SL 3 / ouverts 6 | manqués 0, en attente 9
+   résultat clos -3.86% du capital | latent +1.01%
+
+Échantillon réduit : à lire avec prudence. Détail : backtest_results.csv
