@@ -1,0 +1,21 @@
+📊 Rejeu historique : 60 j, 59 paires, TF 15m,1h
+Risque 1%/trade, frais 0.10%/ordre, 8422 setups
+
+15m long: 1138 trades clos (+1 ouverts)
+  avec réd.: 27% gagnants, -0.43R/trade, total -492.1%
+  sans réd.: 27% gagnants, -0.39R/trade, total -447.0%
+15m short: 1082 trades clos (+1 ouverts)
+  avec réd.: 21% gagnants, -0.68R/trade, total -732.4%
+  sans réd.: 21% gagnants, -0.67R/trade, total -728.7%
+1h long: 247 trades clos (+4 ouverts)
+  avec réd.: 26% gagnants, -0.19R/trade, total -47.3%
+  sans réd.: 26% gagnants, -0.14R/trade, total -35.0%
+1h short: 216 trades clos (+11 ouverts)
+  avec réd.: 20% gagnants, -0.49R/trade, total -106.9%
+  sans réd.: 19% gagnants, -0.54R/trade, total -116.9%
+
+Par distance du SL (avec réduction, long+short) :
+15m | <1%: 1524 tr., -0.71R | 1-2%: 586 tr., -0.22R | 2-4%: 105 tr., -0.14R | >4%: 5 tr., +0.29R
+1h | <1%: 106 tr., -0.59R | 1-2%: 199 tr., -0.33R | 2-4%: 138 tr., -0.18R | >4%: 20 tr., -0.04R
+
+Limites : paires choisies sur leur volume ACTUEL (biais), une seule période de marché, pas de slippage ni de funding, total = somme théorique (trades supposés indépendants). R = 1 risque de trade. Détail : history_results.csv
