@@ -13,7 +13,11 @@ Réglages (variables d'environnement) :
                        (laisser vide = réglage actuel de ob_scanner.py)
 Les autres réglages (EXCHANGE, MIN_VOLUME, RISK_PCT, SPLIT1, FEE_RATE...) sont ceux du scanner.
 
-Résultats : history_results.csv, history_summary.txt, résumé sur Discord.
+Filtres de tendance comparés en une seule exécution (les trades simulés sont les mêmes, seule la
+sélection change) : sans filtre / timeframe supérieur / BTC / TF sup. + BTC / pente / tout.
+Règles identiques à celles du scanner (voir FILTER_* dans ob_scanner.py).
+
+Résultats : history_results.csv, history_summary.txt, et 2 messages Discord (référence + filtres).
 """
 import os
 from pathlib import Path
@@ -30,6 +34,14 @@ MAX_PAIRS = int(os.getenv("MAX_PAIRS", "60"))
 EXPIRE_CANDLES = int(os.getenv("EXPIRE_CANDLES", "72"))
 OVERRIDES = {"IMPULSE_ATR": float, "MIN_RR": float, "MIN_RANGE": int, "SL_MARGIN_ATR": float, "MAX_RANGE": int}
 BUCKETS = [(0, 1, "<1%"), (1, 2, "1-2%"), (2, 4, "2-4%"), (4, 1e9, ">4%")]
+VARIANTS = [
+    ("Sans filtre", ()),
+    ("TF supérieur", ("htf",)),
+    ("BTC", ("btc",)),
+    ("TF sup. + BTC", ("htf", "btc")),
+    ("Pente MA", ("slope",)),
+    ("Tout", ("htf", "btc", "slope")),
+]
 
 
 def apply_overrides() -> dict:
@@ -109,7 +121,18 @@ def candidate_best(df: pd.DataFrame, side: str) -> np.ndarray:
 
 
 # ----------------------------- Rejeu -----------------------------
-def replay_pair(df: pd.DataFrame, tf_ms: int, sym: str, tf: str, first_idx: int) -> list:
+def regime_at(ref: dict, at_ms: int) -> int:
+    """Régime (+1 / -1 / 0) d'une série de référence, avec uniquement les bougies clôturées à at_ms."""
+    idx = int(np.searchsorted(ref["close_ms"], at_ms, side="right"))
+    return ob.above_ma(ref["df"].iloc[max(0, idx - ob.MA_PERIOD):idx])
+
+
+def make_ref(df: pd.DataFrame, tf_ms: int) -> dict:
+    return {"df": df, "close_ms": df["timestamp"].to_numpy() + tf_ms}
+
+
+def replay_pair(df: pd.DataFrame, tf_ms: int, sym: str, tf: str, first_idx: int,
+                htf_ref=None, btc_ref=None) -> list:
     trades = []
     for side in ob.SIDES:
         best = candidate_best(df, side)
@@ -129,9 +152,16 @@ def replay_pair(df: pd.DataFrame, tf_ms: int, sym: str, tf: str, first_idx: int)
             if fut.empty:
                 continue
             fut_l, st_l = ba.to_long_orientation(side, fut, st)
+            alert_ms = int(df["timestamp"][t]) + tf_ms
+            need = ob.MA_PERIOD + ob.SLOPE_LOOKBACK
+            flags = {
+                "htf": True if htf_ref is None else ob.trend_matches(side, regime_at(htf_ref, alert_ms)),
+                "btc": True if btc_ref is None else ob.trend_matches(side, regime_at(btc_ref, alert_ms)),
+                "slope": ob.slope_ok(df.iloc[max(0, t + 1 - need):t + 1]),
+            }
             trades.append({
-                "sym": sym, "tf": tf, "side": side,
-                "alert_utc": pd.Timestamp(int(df["timestamp"][t]) + tf_ms, unit="ms", tz="UTC").strftime("%Y-%m-%d %H:%M"),
+                "sym": sym, "tf": tf, "side": side, "flags": flags,
+                "alert_utc": pd.Timestamp(alert_ms, unit="ms", tz="UTC").strftime("%Y-%m-%d %H:%M"),
                 "e1": st["entry"], "e2": st["entry2"], "sl": st["sl"], "tp": st["tp"],
                 "sl_pct": abs(st["entry"] - st["sl"]) / abs(st["entry"]) * 100,
                 "reduce": ba.simulate(fut_l, st_l, True, expire=EXPIRE_CANDLES),
@@ -182,6 +212,35 @@ def build_texts(trades: list, header: str):
     return "\n".join(main), "\n".join(bucket)
 
 
+def passes(trade: dict, names: tuple) -> bool:
+    return all(trade["flags"][n] for n in names)
+
+
+def fmt_stats(s: dict) -> str:
+    return f"{s['n']} tr., {s['win']:.0f}% gagn., {s['avg_r']:+.2f}R, {s['total']:+.1f}%"
+
+
+def build_filter_texts(trades: list):
+    """Retourne (texte Discord compact, détail long/short pour le fichier)."""
+    lines = [
+        f"🔬 Comparaison des filtres (méthode avec réduction ½, {ob.RISK_PCT:g}% de risque/trade)",
+        f"TF sup. : {', '.join(f'{a}→{b}' for a, b in ob.HTF_MAP.items())} | BTC sur {ob.BTC_TF} | MA{ob.MA_PERIOD}",
+        "",
+    ]
+    detail = []
+    for label, names in VARIANTS:
+        parts = []
+        for tf in ob.TIMEFRAMES:
+            sub = [t for t in trades if t["tf"] == tf and passes(t, names)]
+            parts.append(f"{tf} {fmt_stats(stats([t['reduce'] for t in sub]))}")
+            for side in ob.SIDES:
+                sd = [t for t in sub if t["side"] == side]
+                detail.append(f"{label} | {tf} {side}: {fmt_stats(stats([t['reduce'] for t in sd]))}"
+                              f"  [sans réd.: {fmt_stats(stats([t['plain'] for t in sd]))}]")
+        lines.append(f"{label} : " + " | ".join(parts))
+    return "\n".join(lines), "\n".join(detail)
+
+
 # ----------------------------- Programme -----------------------------
 def main() -> None:
     overrides = apply_overrides()
@@ -193,27 +252,40 @@ def main() -> None:
     now_ms = ex.milliseconds()
     start_ms = now_ms - DAYS * 86400 * 1000
     min_idx = ob.SWING_LOOKBACK + ob.ATR_PERIOD + ob.MAX_RANGE
-    trades, skipped = [], 0
 
+    def load(sym: str, tf: str) -> pd.DataFrame:
+        tf_ms = ex.parse_timeframe(tf) * 1000
+        since = start_ms - (ob.CANDLES + 10) * tf_ms
+        df = ba.fetch_history(ex, sym, tf, since).iloc[:-1].reset_index(drop=True)  # bougie en cours retirée
+        expected = (now_ms - since) // tf_ms
+        if len(df) < 0.9 * expected:
+            raise RuntimeError(f"historique incomplet ({len(df)}/{expected})")
+        return df
+
+    btc_tf_ms = ex.parse_timeframe(ob.BTC_TF) * 1000
+    btc_ref = make_ref(load(ob.BTC_SYMBOL, ob.BTC_TF), btc_tf_ms)  # si cela échoue, on s'arrête : filtres inutilisables
+
+    trades, skipped = [], 0
     for k, sym in enumerate(symbols, 1):
+        cache = {}
+
+        def get(tf: str) -> pd.DataFrame:
+            if tf not in cache:
+                cache[tf] = load(sym, tf)
+            return cache[tf]
+
         for tf in ob.TIMEFRAMES:
             tf_ms = ex.parse_timeframe(tf) * 1000
-            since = start_ms - (ob.CANDLES + 10) * tf_ms
             try:
-                df = ba.fetch_history(ex, sym, tf, since)
+                df = get(tf)
+                htf = ob.HTF_MAP.get(tf)
+                htf_ref = make_ref(get(htf), ex.parse_timeframe(htf) * 1000) if htf else None
             except Exception as err:
-                print(f"  {sym} {tf}: erreur ({err})")
-                skipped += 1
-                continue
-            df = df.iloc[:-1].reset_index(drop=True)  # bougie en cours retirée
-            expected = (now_ms - since) // tf_ms
-            if len(df) < 0.9 * expected:
-                print(f"  {sym} {tf}: historique incomplet ({len(df)}/{expected}), ignoré")
+                print(f"  {sym} {tf}: ignoré ({err})")
                 skipped += 1
                 continue
             first_idx = max(int(np.searchsorted(df["timestamp"].to_numpy(), start_ms)), min_idx)
-            got = replay_pair(df, tf_ms, sym, tf, first_idx)
-            trades.extend(got)
+            trades.extend(replay_pair(df, tf_ms, sym, tf, first_idx, htf_ref, btc_ref))
         print(f"[{k}/{len(symbols)}] {sym}: {len(trades)} trades cumulés")
 
     if not trades:
@@ -222,30 +294,33 @@ def main() -> None:
     pd.DataFrame([{
         "paire": t["sym"], "tf": t["tf"], "sens": t["side"], "alerte_utc": t["alert_utc"],
         "E1": t["e1"], "E2": t["e2"], "SL": t["sl"], "TP": t["tp"], "SL_pct": round(t["sl_pct"], 2),
+        "filtre_tf_sup": t["flags"]["htf"], "filtre_btc": t["flags"]["btc"], "filtre_pente": t["flags"]["slope"],
         "statut_avec_reduction": t["reduce"]["status"], "pnl_pct_avec_reduction": round(t["reduce"]["pnl_pct"], 3),
         "statut_sans_reduction": t["plain"]["status"], "pnl_pct_sans_reduction": round(t["plain"]["pnl_pct"], 3),
         "bougies": t["reduce"].get("bars", 0),
     } for t in trades]).sort_values("alerte_utc").to_csv("history_results.csv", index=False)
 
     params = f" | réglages modifiés : {overrides}" if overrides else ""
-    header = (f"📊 Rejeu historique : {DAYS} j, {len(symbols)} paires, TF {','.join(ob.TIMEFRAMES)}\\n"
+    header = (f"📊 Rejeu historique : {DAYS} j, {len(symbols)} paires, TF {','.join(ob.TIMEFRAMES)}\n"
               f"Risque {ob.RISK_PCT:g}%/trade, frais {ba.FEE_RATE*100:.2f}%/ordre, {len(trades)} setups{params}")
-    header = header.replace("\\n", "\n")
     main_txt, bucket_txt = build_texts(trades, header)
+    filter_txt, filter_detail = build_filter_texts(trades)
     caveats = ("Limites : paires choisies sur leur volume ACTUEL (biais), une seule période de marché, "
                "pas de slippage ni de funding, total = somme théorique (trades supposés indépendants). "
-               "R = 1 risque de trade. Détail : history_results.csv")
-    full = f"{main_txt}\n\n{bucket_txt}\n\n{caveats}"
+               "R = 1 risque de trade. Les filtres réduisent l'échantillon : à lire avec prudence. "
+               "Détail : history_results.csv")
+    full = (f"{main_txt}\n\n{bucket_txt}\n\n{filter_txt}\n\nDétail des filtres par sens :\n{filter_detail}\n\n{caveats}")
     Path("history_summary.txt").write_text(full)
     print(full)
 
-    discord = f"{main_txt}\n\n{bucket_txt}"
-    if len(discord) > 1950:
-        discord = main_txt
-    try:
-        ob.notify(discord[:1990])
-    except Exception as err:
-        print(f"notification échouée : {err}")
+    first = f"{main_txt}\n\n{bucket_txt}"
+    if len(first) > 1950:
+        first = main_txt
+    for msg in (first, filter_txt):
+        try:
+            ob.notify(msg[:1990])
+        except Exception as err:
+            print(f"notification échouée : {err}")
 
 
 if __name__ == "__main__":
