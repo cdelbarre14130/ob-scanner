@@ -1,21 +1,57 @@
 📊 Rejeu historique : 60 j, 59 paires, TF 15m,1h
-Risque 1%/trade, frais 0.10%/ordre, 8422 setups
+Risque 1%/trade, frais 0.10%/ordre, 8348 setups
 
-15m long: 1138 trades clos (+1 ouverts)
-  avec réd.: 27% gagnants, -0.43R/trade, total -492.1%
-  sans réd.: 27% gagnants, -0.39R/trade, total -447.0%
-15m short: 1082 trades clos (+1 ouverts)
-  avec réd.: 21% gagnants, -0.68R/trade, total -732.4%
-  sans réd.: 21% gagnants, -0.67R/trade, total -728.7%
-1h long: 247 trades clos (+4 ouverts)
-  avec réd.: 26% gagnants, -0.19R/trade, total -47.3%
-  sans réd.: 26% gagnants, -0.14R/trade, total -35.0%
-1h short: 216 trades clos (+11 ouverts)
-  avec réd.: 20% gagnants, -0.49R/trade, total -106.9%
-  sans réd.: 19% gagnants, -0.54R/trade, total -116.9%
+15m long: 1138 trades clos (+2 ouverts)
+  avec réd.: 27% gagnants, -0.43R/trade, total -492.8%
+  sans réd.: 27% gagnants, -0.39R/trade, total -447.1%
+15m short: 1081 trades clos (+3 ouverts)
+  avec réd.: 21% gagnants, -0.68R/trade, total -730.4%
+  sans réd.: 21% gagnants, -0.67R/trade, total -726.7%
+1h long: 233 trades clos (+5 ouverts)
+  avec réd.: 25% gagnants, -0.19R/trade, total -43.5%
+  sans réd.: 25% gagnants, -0.15R/trade, total -34.9%
+1h short: 205 trades clos (+11 ouverts)
+  avec réd.: 19% gagnants, -0.51R/trade, total -104.5%
+  sans réd.: 18% gagnants, -0.56R/trade, total -114.4%
 
 Par distance du SL (avec réduction, long+short) :
-15m | <1%: 1524 tr., -0.71R | 1-2%: 586 tr., -0.22R | 2-4%: 105 tr., -0.14R | >4%: 5 tr., +0.29R
-1h | <1%: 106 tr., -0.59R | 1-2%: 199 tr., -0.33R | 2-4%: 138 tr., -0.18R | >4%: 20 tr., -0.04R
+15m | <1%: 1523 tr., -0.71R | 1-2%: 586 tr., -0.22R | 2-4%: 105 tr., -0.14R | >4%: 5 tr., +0.29R
+1h | <1%: 100 tr., -0.53R | 1-2%: 189 tr., -0.35R | 2-4%: 129 tr., -0.22R | >4%: 20 tr., -0.04R
 
-Limites : paires choisies sur leur volume ACTUEL (biais), une seule période de marché, pas de slippage ni de funding, total = somme théorique (trades supposés indépendants). R = 1 risque de trade. Détail : history_results.csv
+🔬 Comparaison des filtres (méthode avec réduction ½, 1% de risque/trade)
+TF sup. : 15m→1h, 1h→4h | BTC sur 1h | MA50
+
+Sans filtre : 15m 2219 tr., 24% gagn., -0.55R, -1223.2% | 1h 438 tr., 22% gagn., -0.34R, -148.0%
+TF supérieur : 15m 1755 tr., 24% gagn., -0.53R, -926.6% | 1h 324 tr., 23% gagn., -0.29R, -93.2%
+BTC : 15m 1435 tr., 23% gagn., -0.58R, -829.0% | 1h 287 tr., 22% gagn., -0.34R, -96.2%
+TF sup. + BTC : 15m 1254 tr., 23% gagn., -0.57R, -712.8% | 1h 214 tr., 22% gagn., -0.31R, -65.3%
+Pente MA : 15m 1324 tr., 26% gagn., -0.51R, -673.6% | 1h 253 tr., 26% gagn., -0.22R, -56.2%
+Tout : 15m 836 tr., 26% gagn., -0.45R, -377.7% | 1h 144 tr., 24% gagn., -0.24R, -35.2%
+
+Détail des filtres par sens :
+Sans filtre | 15m long: 1138 tr., 27% gagn., -0.43R, -492.8%  [sans réd.: 1138 tr., 27% gagn., -0.39R, -447.1%]
+Sans filtre | 15m short: 1081 tr., 21% gagn., -0.68R, -730.4%  [sans réd.: 1081 tr., 21% gagn., -0.67R, -726.7%]
+Sans filtre | 1h long: 233 tr., 25% gagn., -0.19R, -43.5%  [sans réd.: 233 tr., 25% gagn., -0.15R, -34.9%]
+Sans filtre | 1h short: 205 tr., 19% gagn., -0.51R, -104.5%  [sans réd.: 205 tr., 18% gagn., -0.56R, -114.4%]
+TF supérieur | 15m long: 918 tr., 27% gagn., -0.40R, -365.0%  [sans réd.: 918 tr., 27% gagn., -0.37R, -342.0%]
+TF supérieur | 15m short: 837 tr., 21% gagn., -0.67R, -561.6%  [sans réd.: 837 tr., 20% gagn., -0.68R, -570.4%]
+TF supérieur | 1h long: 183 tr., 26% gagn., -0.13R, -23.9%  [sans réd.: 183 tr., 26% gagn., -0.07R, -13.6%]
+TF supérieur | 1h short: 141 tr., 19% gagn., -0.49R, -69.4%  [sans réd.: 141 tr., 18% gagn., -0.54R, -76.4%]
+BTC | 15m long: 708 tr., 26% gagn., -0.45R, -321.5%  [sans réd.: 708 tr., 26% gagn., -0.45R, -315.8%]
+BTC | 15m short: 727 tr., 19% gagn., -0.70R, -507.6%  [sans réd.: 727 tr., 19% gagn., -0.70R, -511.9%]
+BTC | 1h long: 161 tr., 25% gagn., -0.17R, -26.9%  [sans réd.: 161 tr., 25% gagn., -0.13R, -20.4%]
+BTC | 1h short: 126 tr., 18% gagn., -0.55R, -69.3%  [sans réd.: 126 tr., 17% gagn., -0.63R, -79.9%]
+TF sup. + BTC | 15m long: 630 tr., 27% gagn., -0.44R, -277.9%  [sans réd.: 630 tr., 27% gagn., -0.44R, -275.9%]
+TF sup. + BTC | 15m short: 624 tr., 19% gagn., -0.70R, -435.0%  [sans réd.: 624 tr., 19% gagn., -0.72R, -446.8%]
+TF sup. + BTC | 1h long: 131 tr., 27% gagn., -0.10R, -13.2%  [sans réd.: 131 tr., 27% gagn., -0.05R, -5.9%]
+TF sup. + BTC | 1h short: 83 tr., 16% gagn., -0.63R, -52.1%  [sans réd.: 83 tr., 14% gagn., -0.76R, -63.2%]
+Pente MA | 15m long: 675 tr., 30% gagn., -0.38R, -256.9%  [sans réd.: 675 tr., 30% gagn., -0.31R, -210.6%]
+Pente MA | 15m short: 649 tr., 21% gagn., -0.64R, -416.7%  [sans réd.: 649 tr., 21% gagn., -0.63R, -408.0%]
+Pente MA | 1h long: 129 tr., 29% gagn., -0.03R, -3.7%  [sans réd.: 129 tr., 29% gagn., +0.08R, +10.0%]
+Pente MA | 1h short: 124 tr., 23% gagn., -0.42R, -52.5%  [sans réd.: 124 tr., 21% gagn., -0.44R, -55.0%]
+Tout | 15m long: 433 tr., 30% gagn., -0.34R, -148.3%  [sans réd.: 433 tr., 30% gagn., -0.26R, -114.4%]
+Tout | 15m short: 403 tr., 22% gagn., -0.57R, -229.4%  [sans réd.: 403 tr., 22% gagn., -0.54R, -216.1%]
+Tout | 1h long: 86 tr., 28% gagn., -0.03R, -2.6%  [sans réd.: 86 tr., 28% gagn., +0.03R, +2.5%]
+Tout | 1h short: 58 tr., 19% gagn., -0.56R, -32.6%  [sans réd.: 58 tr., 17% gagn., -0.68R, -39.2%]
+
+Limites : paires choisies sur leur volume ACTUEL (biais), une seule période de marché, pas de slippage ni de funding, total = somme théorique (trades supposés indépendants). R = 1 risque de trade. Les filtres réduisent l'échantillon : à lire avec prudence. Détail : history_results.csv
